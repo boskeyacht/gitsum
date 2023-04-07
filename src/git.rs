@@ -1,7 +1,11 @@
-use crate::prompts::SummaryPrompt;
+use crate::prompts::{
+    FileSummaryPrompt, FileSummaryResponse, FolderWideSummaryPrompt, RepositorySummaryPrompt,
+};
 use eyre::{eyre, Error};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use tiktoken_rs::r50k_base;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct File {
@@ -26,7 +30,7 @@ impl File {
 pub struct Folder {
     pub name: String,
 
-    pub files: Vec<File>,
+    pub files: HashMap<String, File>,
 }
 
 impl Folder {
@@ -40,7 +44,7 @@ impl Folder {
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub struct RepositoryContent {
-    pub folders: Vec<Folder>,
+    pub folders: HashMap<String, Folder>,
 
     pub readme: String,
 }
@@ -49,12 +53,12 @@ impl ToString for RepositoryContent {
     fn to_string(&self) -> String {
         let mut content = String::new();
 
-        for folder in &self.folders {
-            content.push_str(&format!("## name: {}, files: {}\n", folder.name, {
+        for (name, folder) in &self.folders {
+            content.push_str(&format!("## name: {}, files: {}\n", name, {
                 let mut files = String::new();
 
-                for file in &folder.files {
-                    files.push_str(&format!("{} ", file.content));
+                for (name, file) in &folder.files {
+                    files.push_str(&format!("{}: {}\n", name, file.content));
                 }
 
                 files
@@ -136,6 +140,8 @@ impl Git {
             self.repository_username, self.repository_name, self.branch
         );
 
+        println!("repo_url: {}", repo_url);
+
         let response = client
             .get(repo_url)
             .header("User-Agent", String::from("baribari2"))
@@ -145,20 +151,22 @@ impl Git {
             .text()
             .await?;
 
+        println!("{}", response);
+
         let tree_response: GitTreeResponse = serde_json::from_str(&response)?;
 
         for item in tree_response.tree {
             if item.object_type == "tree" {
                 self.repository_content
                     .folders
-                    .push(Folder::new(&item.path))
+                    .insert(item.path.clone(), Folder::new(&item.path));
             }
         }
 
-        for folder in &mut self.repository_content.folders {
+        for (name, folder) in &mut self.repository_content.folders {
             let folder_url = format!(
                 "https://api.github.com/repos/{}/{}/contents/{}?ref={}",
-                self.repository_username, self.repository_name, folder.name, self.branch
+                self.repository_username, self.repository_name, name, self.branch
             );
 
             let response = client
@@ -199,11 +207,14 @@ impl Git {
                         .text()
                         .await?;
 
-                    folder.files.push(File::new(
-                        &file.path.clone(),
-                        &download_response.clone(),
-                        &file_response.download_url.clone(),
-                    ));
+                    folder.files.insert(
+                        file.path.clone(),
+                        File::new(
+                            &file.path.clone(),
+                            &download_response.clone(),
+                            &file_response.download_url.clone(),
+                        ),
+                    );
                 }
             }
         }
@@ -224,12 +235,81 @@ impl Git {
             return Err(eyre!("No key provided"));
         }
 
-        let sp = SummaryPrompt::new(&self.repository_content.to_string());
+        let rp = RepositorySummaryPrompt::new(&self.repository_content.to_string());
 
-        let summary_res = sp.send(&self.open_ai_key).await?;
+        let repository_summary_res = rp.send(&self.open_ai_key).await?;
 
-        println!("Summary: {}", summary_res.summary);
+        println!("Summary: {}", repository_summary_res.summary);
 
         Ok(())
+    }
+
+    pub async fn summarize_folder(&self, folder: &str) -> Result<(), Error> {
+        if self.repository_content.folders.is_empty() {
+            return Err(eyre!("No folders in specified repository"));
+        }
+
+        let mut summaries = vec![String::from("")];
+        let bpe = r50k_base().unwrap();
+        if let Some(folder) = self.repository_content.folders.get(folder) {
+            for (name, file) in &folder.files {
+                let file_token_size = bpe.encode_with_special_tokens(&file.content);
+
+                if file_token_size.len() > 4096 {
+                    println!("File {} is too large to summarize", name);
+
+                    continue;
+                }
+
+                let file_summary = self.summarize_file(&folder.name, &file.name).await?;
+
+                println!("Summary for {}: {}", name, file_summary.summary);
+
+                summaries.push(file_summary.summary);
+            }
+        };
+
+        let rp = FolderWideSummaryPrompt::new(&summaries.join(" "));
+
+        let folder_summary_res = rp.send(&self.open_ai_key).await?;
+
+        println!("{} summary: {}", folder, folder_summary_res.summary);
+
+        Ok(())
+    }
+
+    pub async fn summarize_file(
+        &self,
+        folder: &str,
+        file: &str,
+    ) -> Result<FileSummaryResponse, Error> {
+        if self.repository_content.folders.is_empty() {
+            return Err(eyre!("No folders in specified repository"));
+        }
+
+        let bpe = r50k_base().unwrap();
+        let file_summary = if let Some(folder) = self.repository_content.folders.get(folder) {
+            if let Some(file) = folder.files.get(file) {
+                let file_token_size = bpe.encode_with_special_tokens(&file.content);
+
+                if file_token_size.len() > 4096 {
+                    return Err(eyre!("File is too large to summarize"));
+                }
+
+                let fp = FileSummaryPrompt::new(&file.content);
+
+                let file_summary_res = fp.send(&self.open_ai_key).await?;
+
+                println!("Summary for {}: {}", file.name, file_summary_res.summary);
+
+                file_summary_res
+            } else {
+                return Err(eyre!("File not found"));
+            }
+        } else {
+            return Err(eyre!("Folder not found"));
+        };
+
+        Ok(file_summary)
     }
 }

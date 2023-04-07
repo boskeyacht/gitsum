@@ -17,3 +17,4 @@ eyre = "0.6"
 base64 = "0.21.0"
 clap = { version = "4.1.6", features = ["derive"] }
 spinners = "4.1.0"
+tiktoken-rs = "0.4.0"
