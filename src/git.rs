@@ -1,5 +1,6 @@
 use crate::prompts::{
-    FileSummaryPrompt, FileSummaryResponse, FolderWideSummaryPrompt, RepositorySummaryPrompt,
+    FileSummaryPrompt, FileSummaryResponse, FolderWideSummaryPrompt, FolderWideSummaryResponse,
+    RepositorySummaryPrompt,
 };
 use eyre::{eyre, Error};
 use reqwest::Client;
@@ -140,8 +141,6 @@ impl Git {
             self.repository_username, self.repository_name, self.branch
         );
 
-        println!("repo_url: {}", repo_url);
-
         let response = client
             .get(repo_url)
             .header("User-Agent", String::from("baribari2"))
@@ -150,8 +149,6 @@ impl Git {
             .await?
             .text()
             .await?;
-
-        println!("{}", response);
 
         let tree_response: GitTreeResponse = serde_json::from_str(&response)?;
 
@@ -235,21 +232,46 @@ impl Git {
             return Err(eyre!("No key provided"));
         }
 
-        let rp = RepositorySummaryPrompt::new(&self.repository_content.to_string());
+        let mut summaries = vec![String::from("")];
+        for (name, _) in &self.repository_content.folders {
+            let (folder_wide, _) = self.summarize_folder(name).await?;
 
-        let repository_summary_res = rp.send(&self.open_ai_key).await?;
+            summaries.push(folder_wide.summary.clone());
+        }
 
-        println!("Summary: {}", repository_summary_res.summary);
+        let mut s = summaries
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<String>>()
+            .join(" ");
+
+        let repo_prompt = RepositorySummaryPrompt::new(&s);
+
+        let repo_summary = match repo_prompt.send(&self.open_ai_key).await {
+            Ok(s) => s,
+            Err(e) => {
+                println!("Error: {}", e);
+                return Err(eyre!("Error: {}", e));
+            }
+        };
+
+        println!(
+            "{}/{} Summary: {}",
+            self.repository_username, self.repository_name, repo_summary.summary
+        );
 
         Ok(())
     }
 
-    pub async fn summarize_folder(&self, folder: &str) -> Result<(), Error> {
+    pub async fn summarize_folder(
+        &self,
+        folder: &str,
+    ) -> Result<(FolderWideSummaryResponse, Vec<FileSummaryResponse>), Error> {
         if self.repository_content.folders.is_empty() {
             return Err(eyre!("No folders in specified repository"));
         }
 
-        let mut summaries = vec![String::from("")];
+        let mut summaries: Vec<FileSummaryResponse> = vec![];
         let bpe = r50k_base().unwrap();
         if let Some(folder) = self.repository_content.folders.get(folder) {
             for (name, file) in &folder.files {
@@ -263,19 +285,23 @@ impl Git {
 
                 let file_summary = self.summarize_file(&folder.name, &file.name).await?;
 
-                println!("Summary for {}: {}", name, file_summary.summary);
-
-                summaries.push(file_summary.summary);
+                summaries.push(file_summary);
             }
         };
 
-        let rp = FolderWideSummaryPrompt::new(&summaries.join(" "));
+        let sum = summaries
+            .iter()
+            .map(|s| s.summary.clone())
+            .collect::<Vec<String>>()
+            .join(" ");
+
+        let rp = FolderWideSummaryPrompt::new(&sum);
 
         let folder_summary_res = rp.send(&self.open_ai_key).await?;
 
         println!("{} summary: {}", folder, folder_summary_res.summary);
 
-        Ok(())
+        Ok((folder_summary_res, summaries))
     }
 
     pub async fn summarize_file(
@@ -300,7 +326,7 @@ impl Git {
 
                 let file_summary_res = fp.send(&self.open_ai_key).await?;
 
-                println!("Summary for {}: {}", file.name, file_summary_res.summary);
+                println!("Summary for {}: {}\n", file.name, file_summary_res.summary);
 
                 file_summary_res
             } else {

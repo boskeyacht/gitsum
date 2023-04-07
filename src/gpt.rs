@@ -1,4 +1,4 @@
-use eyre::{Error, Result};
+use eyre::{eyre, Error, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -91,7 +91,16 @@ impl ChatRequest {
             .send()
             .await;
 
-        let res = res?.json::<ChatResponse>().await?;
+        let res = match res?.json::<ChatResponse>().await {
+            Ok(res) => res,
+            Err(e) => {
+                return Err(eyre!(
+                    "failed to send gpt request: {}: {}",
+                    &self.messages[0].content,
+                    e
+                ))
+            }
+        };
 
         Ok(res)
     }
