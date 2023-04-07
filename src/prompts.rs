@@ -24,16 +24,6 @@ impl RepositorySummaryPrompt {
         }
     }
 
-    pub fn replace_attributes<T: ToString>(&mut self, attributes: Vec<(T, T)>) {
-        let mut prompt = self.prompt.clone();
-
-        for (key, value) in attributes {
-            prompt = prompt.replace(&key.to_string(), &value.to_string());
-        }
-
-        self.prompt = prompt;
-    }
-
     pub async fn send(&self, key: &str) -> Result<RepositorySummaryResponse, Error> {
         let res = ChatRequestBuilder::default()
             .messages(self.prompt.clone())
@@ -93,16 +83,6 @@ impl FolderWideSummaryPrompt {
         }
     }
 
-    pub fn replace_attributes<T: ToString>(&mut self, attributes: Vec<(T, T)>) {
-        let mut prompt = self.prompt.clone();
-
-        for (key, value) in attributes {
-            prompt = prompt.replace(&key.to_string(), &value.to_string());
-        }
-
-        self.prompt = prompt;
-    }
-
     pub async fn send(&self, key: &str) -> Result<FolderWideSummaryResponse, Error> {
         let res = ChatRequestBuilder::default()
             .messages(self.prompt.clone())
@@ -160,16 +140,6 @@ impl FileSummaryPrompt {
         FileSummaryPrompt {
             prompt: FILE_SUMMARY_PROMPT.replace("{{file}}", contents),
         }
-    }
-
-    pub fn replace_attributes<T: ToString>(&mut self, attributes: Vec<(T, T)>) {
-        let mut prompt = self.prompt.clone();
-
-        for (key, value) in attributes {
-            prompt = prompt.replace(&key.to_string(), &value.to_string());
-        }
-
-        self.prompt = prompt;
     }
 
     pub async fn send(&self, key: &str) -> Result<FileSummaryResponse, Error> {

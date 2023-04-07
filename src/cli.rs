@@ -2,7 +2,6 @@ use crate::git::Git;
 use clap::{Args, Parser, Subcommand};
 use eyre::Error;
 use reqwest::Client;
-use spinners::{Spinner, Spinners};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -86,11 +85,6 @@ impl Cli {
 
         match args.command {
             Commands::Sum(args) => {
-                let mut spinner = Spinner::new(
-                    Spinners::Dots9,
-                    format!("Summarizing {}/{}\n\n", args.username, args.repo),
-                );
-
                 let git_key = match args.git_key {
                     Some(key) => {
                         if key.is_empty() {
@@ -148,10 +142,20 @@ impl Cli {
                     &args.branch,
                 );
 
-                spinner.stop();
-
                 git.get_contents(Client::new()).await?;
-                git.summarize_repository().await?;
+
+                if args.file.is_some() {
+                    if args.folder.is_some() {
+                        git.summarize_file(&args.folder.unwrap(), &args.file.unwrap())
+                            .await?;
+                    } else {
+                        return Err(eyre::eyre!("You must specify a folder to summarize a file"));
+                    }
+                } else if args.folder.is_some() {
+                    git.summarize_folder(&args.folder.unwrap()).await?;
+                } else {
+                    git.summarize_repository().await?;
+                }
             }
         };
 

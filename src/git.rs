@@ -2,6 +2,7 @@ use crate::prompts::{
     FileSummaryPrompt, FileSummaryResponse, FolderWideSummaryPrompt, FolderWideSummaryResponse,
     RepositorySummaryPrompt,
 };
+use colored::*;
 use eyre::{eyre, Error};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -239,7 +240,7 @@ impl Git {
             summaries.push(folder_wide.summary.clone());
         }
 
-        let mut s = summaries
+        let s = summaries
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<String>>()
@@ -299,7 +300,12 @@ impl Git {
 
         let folder_summary_res = rp.send(&self.open_ai_key).await?;
 
-        println!("{} summary: {}", folder, folder_summary_res.summary);
+        println!(
+            "{} {}\n {}",
+            folder.green().bold(),
+            "summary".green().bold(),
+            folder_summary_res.summary
+        );
 
         Ok((folder_summary_res, summaries))
     }
@@ -326,7 +332,12 @@ impl Git {
 
                 let file_summary_res = fp.send(&self.open_ai_key).await?;
 
-                println!("Summary for {}: {}\n", file.name, file_summary_res.summary);
+                println!(
+                    "{} {}\n {}\n",
+                    "Summary for".green().bold(),
+                    file.name.green().bold(),
+                    file_summary_res.summary
+                );
 
                 file_summary_res
             } else {
